@@ -9,7 +9,7 @@ from discord.ext import tasks, commands
 TOKEN = os.getenv("TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 
-# مفتاح Fortnite-API (اختياري لكن مهم لبعض الـ endpoints مثل الشوب)
+# مفتاح Fortnite-API (إذا عندك واحد حطه في Railway باسم FORTNITE_API_KEY)
 API_KEY = os.getenv("FORTNITE_API_KEY")
 HEADERS = {"x-api-key": API_KEY} if API_KEY else {}
 
@@ -32,7 +32,7 @@ ENDPOINTS = {
     "aes":       f"https://fortnite-api.com/v2/aes?language={API_LANG}"
 }
 
-# أسماء عربية لكل Endpoint (للعناوين)
+# أسماء عربية لكل Endpoint
 ENDPOINT_NAMES_AR = {
     "cosmetics": "السكنات والعناصر",
     "news": "الأخبار",
@@ -42,7 +42,7 @@ ENDPOINT_NAMES_AR = {
     "aes": "مفاتيح التشفير (AES)"
 }
 
-# ترجمة بعض المفاتيح داخل الـ JSON لعرض جميل
+# ترجمة لبعض المفاتيح داخل الـ JSON
 DISPLAY_KEY_NAMES_AR = {
     "images": "الصور",
     "pois": "نقاط الاهتمام",
@@ -58,7 +58,6 @@ DISPLAY_KEY_NAMES_AR = {
 # ================== دوال مساعدة ==================
 
 def load_data(name: str):
-    """قراءة نسخة JSON القديمة من القرص."""
     path = os.path.join(DATA_DIR, f"{name}.json")
     if not os.path.exists(path):
         return {}
@@ -70,19 +69,12 @@ def load_data(name: str):
 
 
 def save_data(name: str, content):
-    """حفظ نسخة JSON جديدة في القرص."""
     path = os.path.join(DATA_DIR, f"{name}.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(content, f, ensure_ascii=False, indent=2)
 
 
 def deep_compare(old, new):
-    """
-    مقارنة مبسّطة على مستوى المفاتيح العليا:
-    - added   → مفتاح جديد
-    - removed → مفتاح انحذف
-    - changed → نفس المفتاح لكن قيمته تغيّرت
-    """
     changes = []
 
     if not isinstance(old, dict) or not isinstance(new, dict):
@@ -104,11 +96,6 @@ def deep_compare(old, new):
 
 
 def get_image_for_endpoint(name: str, new_data: dict):
-    """
-    اختيار صورة مناسبة حسب نوع الـ endpoint:
-    - news: صورة أخبار BR
-    - map : خريطة POIs (عادة تحتوي أسماء الأماكن)
-    """
     try:
         if name == "news":
             br = new_data.get("br") or {}
@@ -125,32 +112,46 @@ def get_image_for_endpoint(name: str, new_data: dict):
 
 def build_changes_text(name: str, changes):
     """
-    تكوين نص مرتب للتغييرات بالعربي:
-    سطر عن عدد التغييرات + سطر لكل تغيير مثل:
-    ✅ تمت إضافة الصور
+    يرجّع نص بالشكل اللي تبيه:
+
+    تم اكتشاف 2 تغيير/تغيّرات في قسم الخريطة.
+
+    ✅
+     تمت إضافة الصور
+    ✅
+     تمت إضافة نقاط الاهتمام
+
+    🗺️
+     تم تحديث الخريطة، الصورة في الأسفل توضح شكل التحديث.
     """
     name_ar = ENDPOINT_NAMES_AR.get(name, name)
     lines = []
+
+    # السطر الأساسي
     lines.append(f"تم اكتشاف **{len(changes)}** تغيير/تغيّرات في قسم `{name_ar}`.\n")
 
-    for change_type, key, _, _ in changes[:10]:  # نعرض أول 10 تغييرات فقط
+    # كل تغيير على سطرين: إيموجي ثم النص
+    for change_type, key, _, _ in changes[:10]:
         raw_key = key if key else "root"
         display_key = DISPLAY_KEY_NAMES_AR.get(raw_key, raw_key)
 
         if change_type == "added":
-            line = f"✅ تمت إضافة `{display_key}`"
+            text = f"تمت إضافة {display_key}"
         elif change_type == "removed":
-            line = f"❌ تم حذف `{display_key}`"
+            text = f"تم حذف {display_key}"
         else:
-            line = f"🟡 تم تعديل `{display_key}`"
+            text = f"تم تعديل {display_key}"
 
-        lines.append(line)
+        lines.append("✅" if change_type == "added" else ("❌" if change_type == "removed" else "🟡"))
+        lines.append(f" {text}\n")
 
-    # لو التحديث خريطة أو أخبار نضيف سطر يوضح إن الصورة تحت
+    # ملاحظة خاصة للخريطة والأخبار
     if name == "map":
-        lines.append("\n🗺️ تم تحديث الخريطة، الصورة في الأسفل توضح شكل التحديث.")
-    if name == "news":
-        lines.append("\n📰 تم تحديث الأخبار، الصورة في الأسفل توضح لوحة الأخبار.")
+        lines.append("🗺️")
+        lines.append(" تم تحديث الخريطة، الصورة في الأسفل توضح شكل التحديث.\n")
+    elif name == "news":
+        lines.append("📰")
+        lines.append(" تم تحديث لوحة الأخبار، الصورة في الأسفل توضح التغييرات.\n")
 
     return "\n".join(lines)
 
@@ -189,7 +190,7 @@ async def check_updates():
 
             changes = deep_compare(old, new)
             if not changes:
-                continue  # لا يوجد تغييرات فعلياً
+                continue
 
             save_data(name, new)
 
@@ -197,22 +198,24 @@ async def check_updates():
             title = f"🔔 تحديث جديد في فورتنايت – {name_ar}"
             description = build_changes_text(name, changes)
 
-            embed = discord.Embed(
+            # الرسالة الأولى: نص فقط
+            text_embed = discord.Embed(
                 title=title,
                 description=description,
                 color=discord.Color.blue()
             )
+            text_embed.set_footer(text="تحديث تلقائي • فورتنايت بالعربي")
+            await channel.send(embed=text_embed)
 
+            # الرسالة الثانية (إذا فيه صورة): صورة فقط
             image_url = get_image_for_endpoint(name, new)
             if image_url:
-                embed.set_image(url=image_url)
-
-            embed.set_footer(text="تحديث تلقائي • فورتنايت بالعربي")
-
-            await channel.send(embed=embed)
+                img_embed = discord.Embed(color=discord.Color.blue())
+                img_embed.set_image(url=image_url)
+                img_embed.set_footer(text="تحديث تلقائي • فورتنايت بالعربي")
+                await channel.send(embed=img_embed)
 
         except Exception as e:
-            # نسجّل الخطأ في اللوق فقط، بدون سبام في الديسكورد
             print(f"خطأ أثناء فحص {name}: {e}")
 
 
