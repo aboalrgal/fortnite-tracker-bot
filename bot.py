@@ -8,7 +8,7 @@ from io import BytesIO
 # ================== الإعدادات الأساسية ==================
 
 TOKEN = os.getenv("TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 
 # مفتاح Fortnite-API (لو عندك حطه في Railway باسم FORTNITE_API_KEY)
 API_KEY = os.getenv("FORTNITE_API_KEY")
@@ -337,3 +337,4 @@ if not TOKEN or CHANNEL_ID == 0:
     print("❌ تأكد إنك ضايف متغيرات TOKEN و CHANNEL_ID في Railway.")
 else:
     bot.run(TOKEN)
+
