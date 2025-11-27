@@ -8,7 +8,7 @@ from io import BytesIO
 # ================== الإعدادات الأساسية ==================
 
 TOKEN = os.getenv("TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0")
 
 # مفتاح Fortnite-API (لو عندك حطه في Railway باسم FORTNITE_API_KEY)
 API_KEY = os.getenv("FORTNITE_API_KEY")
@@ -158,7 +158,6 @@ def build_news_detail_text(new_data: dict):
     except Exception:
         return ""
 
-
 # ================== منطق خاص للسكنات (ULTRA Skins) ==================
 
 def extract_cosmetics_list(data_obj):
@@ -214,10 +213,8 @@ async def process_cosmetics_update(channel, url):
     # الرسالة الأولى: نص
     text_embed = discord.Embed(
         title=title,
-        description=description,
-        color=discord.Color.blue()
+        description=description
     )
-    text_embed.set_footer(text="تحديث تلقائي • فورتنايت بالعربي – ULTRA")
     await channel.send(embed=text_embed)
 
     # الرسالة الثانية: صور السكنات الجديدة
@@ -231,13 +228,8 @@ async def process_cosmetics_update(channel, url):
         if not icon_url:
             continue
 
-        e = discord.Embed(
-            title=name,
-            description=desc,
-            color=discord.Color.blue()
-        )
+        e = discord.Embed(title=name, description=desc)
         e.set_image(url=icon_url)
-        e.set_footer(text="سكن جديد • فورتنايت بالعربي – ULTRA")
         embeds.append(e)
 
     if embeds:
@@ -250,7 +242,6 @@ async def process_cosmetics_update(channel, url):
 
     save_data("cosmetics", new_list)
 
-
 # ================== أحداث الديسكورد ==================
 
 @bot.event
@@ -258,9 +249,8 @@ async def on_ready():
     print(f"تم تسجيل الدخول باسم: {bot.user}")
     channel = bot.get_channel(CHANNEL_ID)
     if channel:
-        await channel.send("✅ تم تشغيل نسخة ULTRA – تتابع كل التغييرات في فورتنايت بالعربي.")
+        await channel.send("✅ تم تشغيل نسخة تتابع كل التغييرات في فورتنايت بالعربي.")
     check_updates.start()
-
 
 # ================== المهمة الدورية ==================
 
@@ -312,39 +302,34 @@ async def check_updates():
             else:
                 description = generic_text
 
-            # الرسالة الأولى: النص
+            # الرسالة الأولى: النص فقط
             text_embed = discord.Embed(
                 title=title,
-                description=description,
-                color=discord.Color.blue()
+                description=description
             )
-            text_embed.set_footer(text="تحديث تلقائي • فورتنايت بالعربي – ULTRA")
             await channel.send(embed=text_embed)
 
-            # الرسالة الثانية: الصورة
+            # الرسالة الثانية: الصورة فقط
             image_url = get_image_for_endpoint(name, new_data)
             if image_url:
                 if name == "news":
-                    # إعادة رفع صورة الأخبار كملف (الرابط ما يبان)
+                    # نحمّل صورة الأخبار ونعيد رفعها كملف (بدون أي نص حولها)
                     try:
                         img_resp = requests.get(image_url, timeout=25)
                         img_resp.raise_for_status()
                         file = discord.File(BytesIO(img_resp.content), filename="news.png")
-                        img_embed = discord.Embed(color=discord.Color.blue())
+                        img_embed = discord.Embed()
                         img_embed.set_image(url="attachment://news.png")
-                        img_embed.set_footer(text="تحديث تلقائي • فورتنايت بالعربي – ULTRA")
                         await channel.send(file=file, embed=img_embed)
                     except Exception as e:
                         print("خطأ أثناء تحميل صورة الأخبار:", e)
                 else:
-                    img_embed = discord.Embed(color=discord.Color.blue())
+                    img_embed = discord.Embed()
                     img_embed.set_image(url=image_url)
-                    img_embed.set_footer(text="تحديث تلقائي • فورتنايت بالعربي – ULTRA")
                     await channel.send(embed=img_embed)
 
         except Exception as e:
             print(f"خطأ أثناء فحص {name}: {e}")
-
 
 # ================== تشغيل البوت ==================
 
