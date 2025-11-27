@@ -6,28 +6,31 @@ from discord.ext import tasks, commands
 
 # ================== الإعدادات الأساسية ==================
 
-# توكن البوت وقناة الإرسال يتم تحديدهم من متغيرات البيئة في Railway
+# توكن البوت ورقم القناة من متغيرات البيئة في Railway
 TOKEN = os.getenv("TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
+
+# لغة Fortnite-API (نخليها عربي)
+API_LANG = "ar"
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# مجلد تخزين نسخ الـ JSON السابقة
+# مجلد تخزين نسخ JSON السابقة
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# روابط الـ API التي نتابعها
+# روابط الـ API مع إضافة language=ar
 ENDPOINTS = {
-    "cosmetics": "https://fortnite-api.com/v2/cosmetics/br",
-    "news": "https://fortnite-api.com/v2/news",
-    "shop": "https://fortnite-api.com/v2/shop/br",
-    "playlists": "https://fortnite-api.com/v1/playlists",
-    "map": "https://fortnite-api.com/v1/map",
-    "aes": "https://fortnite-api.com/v2/aes"
+    "cosmetics": f"https://fortnite-api.com/v2/cosmetics/br?language={API_LANG}",
+    "news":      f"https://fortnite-api.com/v2/news?language={API_LANG}",
+    "shop":      f"https://fortnite-api.com/v2/shop/br?language={API_LANG}",
+    "playlists": f"https://fortnite-api.com/v1/playlists?language={API_LANG}",
+    "map":       f"https://fortnite-api.com/v1/map?language={API_LANG}",
+    "aes":       f"https://fortnite-api.com/v2/aes?language={API_LANG}"
 }
 
-# أسماء عربية لكل Endpoint (للاستخدام في العناوين)
+# أسماء عربية لكل Endpoint (للعناوين)
 ENDPOINT_NAMES_AR = {
     "cosmetics": "السكنات والعناصر",
     "news": "الأخبار",
@@ -37,8 +40,20 @@ ENDPOINT_NAMES_AR = {
     "aes": "مفاتيح التشفير (AES)"
 }
 
+# ترجمة مفاتيح مهمة في JSON
+DISPLAY_KEY_NAMES_AR = {
+    "images": "الصور",
+    "pois": "نقاط الاهتمام",
+    "br": "أخبار الباتل رويال",
+    "stw": "أخبار أنقِذ العالم",
+    "build": "رقم البناء (Build)",
+    "mainKey": "المفتاح الرئيسي",
+    "dynamicKeys": "المفاتيح الديناميكية",
+    "updated": "وقت آخر تحديث"
+}
 
-# ================== دوال مساعدة للتخزين والقراءة ==================
+
+# ================== دوال مساعدة ==================
 
 def load_data(name: str):
     """قراءة نسخة JSON القديمة من القرص."""
@@ -61,30 +76,26 @@ def save_data(name: str, content):
 
 def deep_compare(old, new):
     """
-    مقارنة مبسطة بين كائنين من نوع dict على مستوى المفاتيح العليا فقط.
-
-    - أي مفتاح جديد في new وليس في old → تمت إضافته (added)
-    - أي مفتاح موجود في old وليس في new → تم حذفه (removed)
-    - أي مفتاح موجود في الاثنين لكن قيمته مختلفة → تم تعديله (changed)
-
-    هذا يكفي عشان نعرف إنه في تغيير صار (حتى لو تفصيل صغير).
+    مقارنة مبسّطة على مستوى المفاتيح العليا فقط:
+    - added   → مفتاح جديد
+    - removed → مفتاح انحذف
+    - changed → نفس المفتاح لكن قيمته تغيّرت
     """
     changes = []
 
-    # لو مو dict (مثلاً list)، نعاملها كقيمة واحدة
     if not isinstance(old, dict) or not isinstance(new, dict):
         if old != new:
             changes.append(("changed", "", old, new))
         return changes
 
-    # المفاتيح المضافة أو المعدلة
+    # المضافة أو المعدّلة
     for key in new:
         if key not in old:
             changes.append(("added", key, None, new[key]))
         elif old[key] != new[key]:
             changes.append(("changed", key, old[key], new[key]))
 
-    # المفاتيح المحذوفة
+    # المحذوفة
     for key in old:
         if key not in new:
             changes.append(("removed", key, old[key], None))
@@ -94,10 +105,9 @@ def deep_compare(old, new):
 
 def get_image_for_endpoint(name: str, new_data: dict):
     """
-    محاولة استخراج صورة مناسبة للـ Embed حسب نوع الـ endpoint:
-    - الأخبار: صورة الـ BR news
-    - الخريطة: صورة الـ POIs أو الصورة الرئيسية
-    - غيرها: غالباً بدون صورة (ممكن نطوّرها لاحقاً)
+    اختيار صورة مناسبة حسب نوع الـ endpoint:
+    - news: صورة أخبار الـ BR
+    - map : خريطة الـ POIs (بالعربي لو Epic داعمة اللغة)
     """
     try:
         if name == "news":
@@ -106,9 +116,10 @@ def get_image_for_endpoint(name: str, new_data: dict):
 
         if name == "map":
             images = new_data.get("images") or {}
+            # نحاول أولاً خريطة الـ POIs (عادةً فيها أسماء الأماكن)
             return images.get("pois") or images.get("main") or images.get("map")
 
-        # ممكن تطويرها لاحقاً لـ cosmetics / shop / playlists
+        # باقي الأنواع ما نربط لها صورة حالياً
         return None
     except Exception:
         return None
@@ -122,24 +133,20 @@ async def on_ready():
     print(f"تم تسجيل الدخول باسم: {bot.user}")
     channel = bot.get_channel(CHANNEL_ID)
     if channel:
-        # رسالة بداية تأكيد إن البوت شغال
-        start_msg = "✅ البوت شغّال الآن ويتابع تحديثات فورتنايت من الـ API بشكل تلقائي."
-        await channel.send(start_msg)
+        await channel.send("✅ البوت شغّال الآن ويتابع تحديثات فورتنايت من الـ API (باللغة العربية).")
 
-    # بدء المهمة الدورية
     check_updates.start()
 
 
-# ================== المهمة الدورية لفحص التحديثات ==================
+# ================== المهمة الدورية ==================
 
 @tasks.loop(minutes=5)
 async def check_updates():
     """
     كل ٥ دقائق:
-    - نقرأ النسخة القديمة من كل Endpoint
-    - نطلب النسخة الجديدة من Fortnite API
-    - نقارن بينهم
-    - لو فيه تغييرات → نرسل Embed واحد لكل Endpoint فيه تغييرات
+    - نطلب بيانات جديدة من كل Endpoint
+    - نقارنها مع النسخة المخزّنة
+    - لو فيه تغييرات → نرسل Embed واحد بالعربي لكل Endpoint فيه تغييرات
     """
     channel = bot.get_channel(CHANNEL_ID)
     if channel is None:
@@ -150,7 +157,7 @@ async def check_updates():
         try:
             old = load_data(name)
 
-            res = requests.get(url, timeout=20)
+            res = requests.get(url, timeout=25)
             res.raise_for_status()
             json_res = res.json()
 
@@ -160,19 +167,16 @@ async def check_updates():
 
             changes = deep_compare(old, new)
             if not changes:
-                # ما فيه تغييرات لهذا الـ endpoint
-                continue
+                continue  # ما فيه أي تغيير
 
             # حفظ النسخة الجديدة
             save_data(name, new)
 
-            # ---------------- بناء رسالة التحديث ----------------
-
+            # -------- بناء رسالة التحديث --------
             changes_count = len(changes)
             name_ar = ENDPOINT_NAMES_AR.get(name, name)
 
             title = f"🔔 تحديث جديد في فورتنايت – {name_ar}"
-
             desc = f"تم اكتشاف **{changes_count}** تغيير/تغيّرات في قسم `{name_ar}`."
 
             embed = discord.Embed(
@@ -181,41 +185,35 @@ async def check_updates():
                 color=discord.Color.blue()
             )
 
-            # نضيف ملخّص لأهم 10 تغييرات فقط عشان ما يصير Spam كبير داخل نفس الرسالة
+            # نعرض أول 10 تغييرات فقط عشان ما تصير الرسالة طويلة جداً
             for change_type, key, _, _ in changes[:10]:
-                key_text = key if key else "الجذر (Root)"
-
+                raw_key = key if key else "root"
+                display_key = DISPLAY_KEY_NAMES_AR.get(raw_key, raw_key)
                 if change_type == "added":
-                    line = f"✅ تمت إضافة `{key_text}`"
+                    line = f"✅ تمت إضافة `{display_key}`"
                 elif change_type == "removed":
-                    line = f"❌ تم حذف `{key_text}`"
+                    line = f"❌ تم حذف `{display_key}`"
                 else:
-                    line = f"🟡 تم تعديل `{key_text}`"
+                    line = f"🟡 تم تعديل `{display_key}`"
 
                 embed.add_field(
-                    name=key_text,
+                    name=display_key,
                     value=line,
                     inline=False
                 )
 
-            # إضافة صورة لو متاحة (news / map)
             image_url = get_image_for_endpoint(name, new)
             if image_url:
                 embed.set_image(url=image_url)
 
-            # فوتر عربي
-            embed.set_footer(
-                text="تحديث تلقائي • فورتنايت بالعربي"
-            )
+            embed.set_footer(text="تحديث تلقائي • فورتنايت بالعربي")
 
             await channel.send(embed=embed)
 
         except Exception as e:
-            print(f"خطأ أثناء فحص {name}:", e)
+            print(f"خطأ أثناء فحص {name}: {e}")
             try:
-                await channel.send(
-                    f"⚠️ صار خطأ أثناء فحص `{name}`:\n`{e}`"
-                )
+                await channel.send(f"⚠️ صار خطأ أثناء فحص `{name}`:\n`{e}`")
             except Exception:
                 pass
 
