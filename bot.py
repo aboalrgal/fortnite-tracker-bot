@@ -9,12 +9,11 @@ from discord.ext import tasks, commands
 TOKEN = os.getenv("TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 
-# مفتاح Fortnite-API (إذا عندك واحد حطه في Railway باسم FORTNITE_API_KEY)
+# مفتاح Fortnite-API (لو عندك حطه في Railway باسم FORTNITE_API_KEY)
 API_KEY = os.getenv("FORTNITE_API_KEY")
 HEADERS = {"x-api-key": API_KEY} if API_KEY else {}
 
-# لغة بيانات Fortnite-API
-API_LANG = "ar"
+API_LANG = "ar"  # نخلي كل شيء بالعربي من الـ API
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -22,7 +21,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# روابط الـ API مع language=ar
 ENDPOINTS = {
     "cosmetics": f"https://fortnite-api.com/v2/cosmetics/br?language={API_LANG}",
     "news":      f"https://fortnite-api.com/v2/news?language={API_LANG}",
@@ -32,7 +30,6 @@ ENDPOINTS = {
     "aes":       f"https://fortnite-api.com/v2/aes?language={API_LANG}"
 }
 
-# أسماء عربية لكل Endpoint
 ENDPOINT_NAMES_AR = {
     "cosmetics": "السكنات والعناصر",
     "news": "الأخبار",
@@ -42,7 +39,6 @@ ENDPOINT_NAMES_AR = {
     "aes": "مفاتيح التشفير (AES)"
 }
 
-# ترجمة لبعض المفاتيح داخل الـ JSON
 DISPLAY_KEY_NAMES_AR = {
     "images": "الصور",
     "pois": "نقاط الاهتمام",
@@ -54,18 +50,17 @@ DISPLAY_KEY_NAMES_AR = {
     "updated": "وقت آخر تحديث"
 }
 
-
-# ================== دوال مساعدة ==================
+# ================== دوال مساعدة عامة ==================
 
 def load_data(name: str):
     path = os.path.join(DATA_DIR, f"{name}.json")
     if not os.path.exists(path):
-        return {}
+        return None
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return {}
+        return None
 
 
 def save_data(name: str, content):
@@ -75,6 +70,7 @@ def save_data(name: str, content):
 
 
 def deep_compare(old, new):
+    """مقارنة بسيطة على مستوى المفاتيح العليا للـ dict."""
     changes = []
 
     if not isinstance(old, dict) or not isinstance(new, dict):
@@ -96,6 +92,7 @@ def deep_compare(old, new):
 
 
 def get_image_for_endpoint(name: str, new_data: dict):
+    """اختيار صورة مناسبة للـ map/news (ULTRA)."""
     try:
         if name == "news":
             br = new_data.get("br") or {}
@@ -110,42 +107,30 @@ def get_image_for_endpoint(name: str, new_data: dict):
         return None
 
 
-def build_changes_text(name: str, changes):
-    """
-    يرجّع نص بالشكل اللي تبيه:
-
-    تم اكتشاف 2 تغيير/تغيّرات في قسم الخريطة.
-
-    ✅
-     تمت إضافة الصور
-    ✅
-     تمت إضافة نقاط الاهتمام
-
-    🗺️
-     تم تحديث الخريطة، الصورة في الأسفل توضح شكل التحديث.
-    """
+def build_generic_changes_text(name: str, changes):
+    """نص مرتب لأي Endpoint غير السكنات."""
     name_ar = ENDPOINT_NAMES_AR.get(name, name)
     lines = []
 
-    # السطر الأساسي
     lines.append(f"تم اكتشاف **{len(changes)}** تغيير/تغيّرات في قسم `{name_ar}`.\n")
 
-    # كل تغيير على سطرين: إيموجي ثم النص
     for change_type, key, _, _ in changes[:10]:
         raw_key = key if key else "root"
         display_key = DISPLAY_KEY_NAMES_AR.get(raw_key, raw_key)
 
         if change_type == "added":
+            emoji = "✅"
             text = f"تمت إضافة {display_key}"
         elif change_type == "removed":
+            emoji = "❌"
             text = f"تم حذف {display_key}"
         else:
+            emoji = "🟡"
             text = f"تم تعديل {display_key}"
 
-        lines.append("✅" if change_type == "added" else ("❌" if change_type == "removed" else "🟡"))
+        lines.append(emoji)
         lines.append(f" {text}\n")
 
-    # ملاحظة خاصة للخريطة والأخبار
     if name == "map":
         lines.append("🗺️")
         lines.append(" تم تحديث الخريطة، الصورة في الأسفل توضح شكل التحديث.\n")
@@ -155,6 +140,103 @@ def build_changes_text(name: str, changes):
 
     return "\n".join(lines)
 
+# ================== منطق خاص للسكنات (ULTRA Skins) ==================
+
+def extract_cosmetics_list(data_obj):
+    """يتأكد أن الناتج دائماً list من الكوزماتكس."""
+    if isinstance(data_obj, list):
+        return data_obj
+    if isinstance(data_obj, dict) and "data" in data_obj and isinstance(data_obj["data"], list):
+        return data_obj["data"]
+    return []
+
+
+async def process_cosmetics_update(channel, url):
+    """يتعامل مع السكنات بطريقة خاصة: يحسب السكنات الجديدة ويرسل أسماء + صور."""
+    old_raw = load_data("cosmetics")
+    old_list = extract_cosmetics_list(old_raw) if old_raw is not None else []
+
+    # طلب جديد من الـ API
+    res = requests.get(url, headers=HEADERS, timeout=30)
+    res.raise_for_status()
+    json_res = res.json()
+    new_list = json_res.get("data", [])
+    new_list = extract_cosmetics_list(new_list)
+
+    # أول تشغيل → نخزن فقط بدون ما نعلن (عشان ما نرسل آلاف السكنات)
+    if not old_list:
+        save_data("cosmetics", new_list)
+        return
+
+    old_ids = {c.get("id") for c in old_list if c.get("id")}
+    new_ids = {c.get("id") for c in new_list if c.get("id")}
+
+    added_ids = [cid for cid in new_ids if cid not in old_ids]
+
+    if not added_ids:
+        # مافي سكنات جديدة
+        save_data("cosmetics", new_list)
+        return
+
+    new_cosmetics = [c for c in new_list if c.get("id") in added_ids]
+
+    count = len(new_cosmetics)
+    # أسماء السكنات (أي لغة تجي من الـ API – عربي أو إنجليزي)
+    names = [c.get("name") for c in new_cosmetics if c.get("name")]
+    names_str = "، ".join(names) if names else "بدون أسماء متوفرة"
+
+    title = "🔔 تحديث جديد في فورتنايت – السكنات الجديدة"
+
+    desc_lines = []
+    desc_lines.append(f"تم إضافة **{count}** سكن/سكنات جديدة في قسم السكنات والعناصر.\n")
+    desc_lines.append("✅")
+    desc_lines.append(f" تمت إضافة السكنات التالية:\n{names_str}\n")
+    desc_lines.append("🖼️")
+    desc_lines.append(" سيتم عرض صور السكنات الجديدة في الرسالة التالية.\n")
+
+    description = "\n".join(desc_lines)
+
+    # الرسالة الأولى: النص
+    text_embed = discord.Embed(
+        title=title,
+        description=description,
+        color=discord.Color.blue()
+    )
+    text_embed.set_footer(text="تحديث تلقائي • فورتنايت بالعربي – ULTRA")
+    await channel.send(embed=text_embed)
+
+    # الرسالة الثانية: صور السكنات الجديدة
+    embeds = []
+    for c in new_cosmetics[:8]:  # لو كثير نكتفي بأول 8
+        name = c.get("name") or "سكن جديد"
+        desc = c.get("description") or ""
+        images = c.get("images") or {}
+        icon_url = images.get("icon") or images.get("featured") or images.get("smallIcon")
+
+        if not icon_url:
+            continue
+
+        e = discord.Embed(
+            title=name,
+            description=desc,
+            color=discord.Color.blue()
+        )
+        e.set_image(url=icon_url)
+        e.set_footer(text="سكن جديد • فورتنايت بالعربي – ULTRA")
+        embeds.append(e)
+
+    if embeds:
+        # لو مكتبتك تدعم multiple embeds:
+        try:
+            await channel.send(content="🖼️ صور السكنات الجديدة:", embeds=embeds)
+        except TypeError:
+            # لو الإصدار قديم → نرسل كل واحد لحاله
+            await channel.send(content="🖼️ صور السكنات الجديدة:")
+            for e in embeds:
+                await channel.send(embed=e)
+
+    # في النهاية نحفظ النسخة الجديدة
+    save_data("cosmetics", new_list)
 
 # ================== أحداث الديسكورد ==================
 
@@ -163,9 +245,8 @@ async def on_ready():
     print(f"تم تسجيل الدخول باسم: {bot.user}")
     channel = bot.get_channel(CHANNEL_ID)
     if channel:
-        await channel.send("✅ البوت شغّال الآن ويتابع تحديثات فورتنايت من الـ API (عربي بالكامل).")
+        await channel.send("✅ تم تشغيل نسخة ULTRA – تتابع كل التغييرات في فورتنايت بالعربي.")
     check_updates.start()
-
 
 # ================== المهمة الدورية ==================
 
@@ -178,46 +259,54 @@ async def check_updates():
 
     for name, url in ENDPOINTS.items():
         try:
-            old = load_data(name)
+            # سكنات لها معالجة خاصة
+            if name == "cosmetics":
+                await process_cosmetics_update(channel, url)
+                continue
+
+            # باقي الـ endpoints (خريطة، أخبار، شوب، AES، أطوار...)
+            old_data = load_data(name)
+            if old_data is None:
+                old_data = {}
 
             res = requests.get(url, headers=HEADERS, timeout=25)
             res.raise_for_status()
             json_res = res.json()
 
-            new = json_res.get("data", {})
-            if not new:
+            new_data = json_res.get("data", {})
+            if not new_data:
                 continue
 
-            changes = deep_compare(old, new)
+            changes = deep_compare(old_data, new_data)
             if not changes:
+                save_data(name, new_data)
                 continue
 
-            save_data(name, new)
+            save_data(name, new_data)
 
             name_ar = ENDPOINT_NAMES_AR.get(name, name)
             title = f"🔔 تحديث جديد في فورتنايت – {name_ar}"
-            description = build_changes_text(name, changes)
+            description = build_generic_changes_text(name, changes)
 
-            # الرسالة الأولى: نص فقط
+            # الرسالة الأولى: نص التغييرات
             text_embed = discord.Embed(
                 title=title,
                 description=description,
                 color=discord.Color.blue()
             )
-            text_embed.set_footer(text="تحديث تلقائي • فورتنايت بالعربي")
+            text_embed.set_footer(text="تحديث تلقائي • فورتنايت بالعربي – ULTRA")
             await channel.send(embed=text_embed)
 
-            # الرسالة الثانية (إذا فيه صورة): صورة فقط
-            image_url = get_image_for_endpoint(name, new)
+            # الرسالة الثانية: صورة (للخريطة أو الأخبار لو فيه)
+            image_url = get_image_for_endpoint(name, new_data)
             if image_url:
                 img_embed = discord.Embed(color=discord.Color.blue())
                 img_embed.set_image(url=image_url)
-                img_embed.set_footer(text="تحديث تلقائي • فورتنايت بالعربي")
+                img_embed.set_footer(text="تحديث تلقائي • فورتنايت بالعربي – ULTRA")
                 await channel.send(embed=img_embed)
 
         except Exception as e:
             print(f"خطأ أثناء فحص {name}: {e}")
-
 
 # ================== تشغيل البوت ==================
 
